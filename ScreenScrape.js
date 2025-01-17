@@ -37,13 +37,33 @@ const path = require('path');
             // Process each URL
             for (const url of urls) {
                 console.log(`Processing URL: ${url}`);
-                const fileName = `classspecs_${path.basename(url)}.pdf`;
-                const filePath = path.join(outputDir, fileName);
-
                 try {
                     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-                    // Save the page as a PDF
+                    // Extract the Class Title from the page
+                    const classTitle = await page.evaluate(() => {
+                        const dtElements = Array.from(document.querySelectorAll('dt.term-description'));
+                        for (const dt of dtElements) {
+                            if (dt.textContent.trim() === 'Class Title') {
+                                const dd = dt.nextElementSibling; // Get the corresponding <dd> tag
+                                return dd ? dd.textContent.trim() : null;
+                            }
+                        }
+                        return 'Unknown_Class_Title'; // Fallback title if not found
+                    });
+
+                    // Sanitize the class title for safe file naming
+                    const sanitizedTitle = classTitle.replace(/[<>:"/\\|?*]/g, '_');
+                    const fileName = `${sanitizedTitle}.pdf`;
+                    const filePath = path.join(outputDir, fileName);
+
+                    // Remove all links (URLs) from the page
+                    await page.evaluate(() => {
+                        const links = document.querySelectorAll('a');
+                        links.forEach(link => link.remove());
+                    });
+
+                    // Save the modified page as a PDF
                     await page.pdf({
                         path: filePath,
                         format: 'A4',
@@ -57,17 +77,17 @@ const path = require('path');
                 }
             }
 
-            // Check if a "Next" button exists
-            const isNextButtonVisible = await page.evaluate(() => {
-                const nextButton = document.querySelector('a[rel="next"]');
-                return !!nextButton; // Returns true if the "Next" button exists
+            // Check if the "Next" button is disabled
+            const isNextButtonDisabled = await page.evaluate(() => {
+                const nextButtonLi = document.querySelector('li.PagedList-skipToNext');
+                return nextButtonLi && nextButtonLi.classList.contains('disabled');
             });
 
-            if (isNextButtonVisible) {
-                currentPageNumber += 1; // Increment the page number for the next page
-            } else {
-                console.log('No more pages found. Exiting pagination.');
+            if (isNextButtonDisabled) {
+                console.log('No more pages to process. Exiting pagination.');
                 hasNextPage = false;
+            } else {
+                currentPageNumber += 1; // Increment the page number for the next page
             }
         }
     } catch (error) {
